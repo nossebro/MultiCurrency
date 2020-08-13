@@ -4,3 +4,4 @@ Settings.js
 Settings.json
 debug*
 info*
+*.db

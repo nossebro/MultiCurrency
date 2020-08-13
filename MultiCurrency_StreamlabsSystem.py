@@ -8,18 +8,21 @@ import re
 import os
 import codecs
 import json
-import time
+import ast
+from ConfigParser import ConfigParser
+clr.AddReference("IronPython.SQLite.dll")
+import sqlite3
 clr.AddReference("websocket-sharp.dll")
 from WebSocketSharp import WebSocket
 
 #---------------------------------------
 #   [Required] Script Information
 #---------------------------------------
-ScriptName = "SocketReceiver"
-Website = "https://github.com/nossebro/SocketReceiver"
+ScriptName = "MultiCurrency"
+Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.0.2"
-Description = "Read events from the local SLCB socket"
+Version = "0.0.1"
+Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
 #   Script Variables
@@ -27,9 +30,10 @@ Description = "Read events from the local SLCB socket"
 ScriptSettings = None
 LocalAPI = None
 Logger = None
-LastTime = None
 LocalSocket = None
 LocalSocketIsConnected = False
+Currency = None
+ConfigFile = os.path.join(os.path.dirname(__file__), "Config.ini")
 SettingsFile = os.path.join(os.path.dirname(__file__), "Settings.json")
 UIConfigFile = os.path.join(os.path.dirname(__file__), "UI_Config.json")
 APIKeyFile = os.path.join(os.path.dirname(__file__), "API_Key.js")
@@ -124,6 +128,39 @@ def MergeLists(x = dict(), y = dict()):
 			z[attr] = y[attr]
 	return z
 
+def UpdateCurrency(caster = str(), currency = str(), command = str(), user = str(), amount = int()):
+	global Currency
+	DB = Currency["Currency"][currency]["Database"].cursor()
+	userlist = [ user ]
+	group = "viewers"
+	action = "addto"
+	if user == "+active":
+		userlist = Parent.GetActiveUsers()
+	elif user == "+viewers":
+		userlist = Parent.GetViewerList()
+	else:
+		group = "user"
+	if command == "add":
+		if user.startswith("+"):
+			Parent.SendTwitchMessage(Currency["Currency"][currency]["addtoviewers"].format(broadcaster=caster, action="Started", amount=amount, currency=currency, group=user))
+		for x in userlist:
+			DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (x, amount))
+	elif command == "remove":
+		action = "removefrom"
+		if user.startswith("+"):
+			Parent.SendTwitchMessage(Currency["Currency"][currency]["removefromviewers"].format(broadcaster=caster, action="Started", amount=amount, currency=currency, group=user))
+		for x in userlist:
+			DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (x, amount * -1))
+	Currency["Currency"][currency]["Database"].commit()
+	Parent.SendTwitchMessage(Currency["Currency"][currency]["{0}{1}".format(action, group)].format(broadcaster=caster, action="Done", amount=amount, currency=currency, group=user))
+
+def TransferCurrency(caster = str(), currency = str(), fromuser = str(), touser = str()):
+	global Currency
+	DB = Currency["Currency"][currency]["Database"].cursor()
+	DB.execute("UPDATE currency SET user = '{0}' WHERE user == '{1}' COLLATE NOCASE;".format(touser, fromuser))
+	Currency["Currency"][currency]["Database"].commit()
+	Parent.SendTwitchMessage("{0} --> Succesfully transferred {1} from {2} to {3}!".format(caster, currency, Parent.GetDisplayName(fromuser), Parent.GetDisplayName(touser)))
+
 #---------------------------------------
 #   Chatbot Initialize Function
 #---------------------------------------
@@ -132,6 +169,32 @@ def Init():
 	ScriptSettings = Settings(SettingsFile)
 	global Logger
 	Logger = GetLogger()
+
+	global Currency
+	Currency = dict()
+	Currency["Currency"] = dict()
+	config = ConfigParser()
+	if not config.read(ConfigFile):
+		Logger.warning("Could not read Config.ini")
+	if config.has_section("Defaults"):
+		Currency["Defaults"] = dict()
+		Currency["Defaults"].update(config.items("Defaults"))
+		config.remove_section("Defaults")
+	if config.has_section("Rewards"):
+		Currency["Commands"] = dict()
+		Currency["Commands"].update(config.items("Rewards"))
+		config.remove_section("Rewards")
+	for x in config.sections():
+		Currency["Currency"][config.get(x, "Command")] = { "Name": x, "Database": sqlite3.connect(os.path.join(os.path.dirname(__file__), config.get(x, "Database")), check_same_thread = False) }
+		DB = Currency["Currency"][config.get(x, "Command")]["Database"].cursor()
+		DB.execute("CREATE TABLE IF NOT EXISTS currency (date text, user text, currency integer);")
+		Currency["Currency"][config.get(x, "Command")]["Database"].commit()
+		DB = None
+		for y in Currency["Defaults"]:
+			if config.has_option(x, y):
+				Currency["Currency"][config.get(x, "Command")][y] = config.get(x, y)
+			else:
+				Currency["Currency"][config.get(x, "Command")][y] = Currency["Defaults"][y]
 
 	global LocalSocket
 	global LocalAPI
@@ -146,22 +209,26 @@ def Init():
 		LocalSocket.Connect()
 	else:
 		Logger.critical("API_Key.js missing from script folder")
-	
-	global LastTime
-	LastTime = time.time()
+
+	Parent.AddCooldown(ScriptName, "LocalSocket", 10)
 
 #---------------------------------------
 #   Chatbot Script Unload Function
 #---------------------------------------
 def Unload():
 	global LocalSocket
-	global Logger
-	# Disconnect LocalSocket cleanly
 	if LocalSocket:
 		LocalSocket.Close(1000, "Program exit")
 		LocalSocket = None
 		Logger.debug("LocalSocket Disconnected")
+	global Currency
+	for x in Currency["Currency"]:
+		if Currency["Currency"][x]["Database"]:
+			Currency["Currency"][x]["Database"].close()
+			Currency["Currency"][x]["Database"] = None
+	global Logger
 	if Logger:
+		Logger.debug(type(Logger.handlers))
 		Logger.handlers.Clear()
 		Logger = None
 
@@ -183,32 +250,52 @@ def ReloadSettings(jsondata):
 #   Chatbot Execute Function
 #---------------------------------------
 def Execute(data):
-	pass
+	if data.IsChatMessage() and data.IsFromTwitch():
+		global Currency
+		match = re.match(r"!(?P<currency>[\w\d]+)", data.GetParam(0))
+		Logger.info(match.group("currency"))
+		if match and match.group("currency") and match.group("currency") in Currency["Currency"]:
+			if data.GetParamCount() == 1 and not Parent.IsOnCooldown(ScriptName, match.group("currency")):
+				DB = Currency["Currency"][match.group("currency")]["Database"].cursor()
+				DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(data.User))
+				Total = int(DB.fetchall()[0][0] or 0)
+				Parent.SendTwitchMessage(Currency["Currency"][match.group("currency")]["response"].format(user=data.UserName, amount=Total, currency=match.group("currency")))
+			elif data.GetParamCount() == 4 and Parent.HasPermission(data.User, "caster", ""):
+				if data.GetParam(1).lower() in [ "add", "remove" ]:
+					if isinstance(ast.literal_eval(data.GetParam(3)), int):
+						UpdateCurrency(caster=data.UserName, currency=match.group("currency"), command=data.GetParam(1).lower(), user=data.GetParam(2).lower(), amount=int(data.GetParam(3)))
+					else:
+						Parent.SendTwitchMessage("Malformed {0} command".format(match.group("currency")))
+				elif data.GetParam(1).lower() == "transfer":
+					TransferCurrency(caster=data.UserName, currency=match.group("currency"), fromuser=data.GetParam(2).lower(), touser=data.GetParam(3).lower())
+
+
+
+# !Points Add AnkhHeart 10000
+
+#		if not Parent.IsOnCooldown(ScriptName, ScriptSettings.OnlineBoostCommand) and data.GetParam(0) == "!{0}".format(ScriptSettings.OnlineBoostCommand) and data.GetParamCount() == 1:
 
 #---------------------------------------
 #   Chatbot Tick Function
 #---------------------------------------
 def Tick():
-	global LastTime
-	Now = time.time()
-	SinceLast = Now - LastTime
-	if SinceLast >= 10 and not LocalSocketIsConnected and all (keys in LocalAPI for keys in ("Key", "Socket")):
+	global LocalSocketIsConnected
+	if not Parent.IsOnCooldown(ScriptName, "LocalSocket") and not LocalSocketIsConnected and all (keys in LocalAPI for keys in ("Key", "Socket")):
 		Logger.warning("No EVENT_CONNECTED received from LocalSocket, reconnecting")
 		try:
 			LocalSocket.Close(1006, "No connection confirmation received")
 		except:
-			Logger.error("Could not close LocalSocket socket gracefully")
+			Logger.error("Could not close LocalSocket gracefully")
 		LocalSocket.Connect()
-		LastTime = Now
-	if SinceLast >= 60:
-		if not LocalSocket.IsAlive:
-			Logger.warning("LocalSocket seems dead, reconnecting")
-			try:
-				LocalSocket.Close()
-			except:
-				Logger.error("Could not close LocalSocket gracefully")
-			LocalSocket.Connect()
-		LastTime = Now
+		Parent.AddCooldown(ScriptName, "LocalSocket", 10)
+	if not Parent.IsOnCooldown(ScriptName, "LocalSocket") and not LocalSocket.IsAlive:
+		Logger.warning("LocalSocket seems dead, reconnecting")
+		try:
+			LocalSocket.Close(1006, "No connection")
+		except:
+			Logger.error("Could not close LocalSocket gracefully")
+		LocalSocket.Connect()
+		Parent.AddCooldown(ScriptName, "LocalSocket", 10)
 
 #---------------------------------------
 #   LocalSocket Connect Function
@@ -219,7 +306,7 @@ def LocalSocketConnected(ws, data):
 		"author": Creator,
 		"website": Website,
 		"api_key": LocalAPI["Key"],
-		"events": ScriptSettings.Events.split(",")
+		"events": [ "TWITCH_REWARD_V1" ]
 	}
 	ws.Send(json.dumps(Auth))
 	Logger.debug("Auth: {0}".format(json.dumps(Auth)))
@@ -259,5 +346,10 @@ def LocalSocketEvent(ws, data):
 			global LocalSocketIsConnected
 			LocalSocketIsConnected = True
 			Logger.info(event["data"]["message"])
-		else:
-			Logger.warning("Unhandled event: {0}: {1}".format(event["event"], event["data"]))
+		elif event["event"] == "TWITCH_REWARD_V1":
+			if event["data"]["reward_id"] in Currency["Commands"]:
+				txt = Currency["Commands"][event["data"]["reward_id"]].split(" ")
+				match = re.match(r"!(?P<currency>[\w\d]+)", txt[0])
+				UpdateCurrency(caster=event["data"]["display_name"], currency=match.group("currency"), command=txt[1].lower(), user=event["data"]["user_name"], amount=int(txt[3]))
+#		else:
+#			Logger.warning("Unhandled event: {0}: {1}".format(event["event"], event["data"]))
