@@ -21,7 +21,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.0.1"
+Version = "0.0.2"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -152,7 +152,10 @@ def UpdateCurrency(caster = str(), currency = str(), command = str(), user = str
 		for x in userlist:
 			DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (x, amount * -1))
 	Currency["Currency"][currency]["Database"].commit()
-	Parent.SendTwitchMessage(Currency["Currency"][currency]["{0}{1}".format(action, group)].format(broadcaster=caster, action="Done", amount=amount, currency=currency, group=user))
+	if user.startswith("+"):
+		Parent.SendTwitchMessage(Currency["Currency"][currency]["{0}{1}".format(action, group)].format(broadcaster=caster, action="Done", amount=amount, currency=currency, group=user))
+	else:
+		Parent.SendTwitchMessage(Currency["Currency"][currency]["{0}{1}".format(action, group)].format(broadcaster=caster, user=user, amount=amount, currency=currency))
 
 def TransferCurrency(caster = str(), currency = str(), fromuser = str(), touser = str()):
 	global Currency
@@ -253,7 +256,6 @@ def Execute(data):
 	if data.IsChatMessage() and data.IsFromTwitch():
 		global Currency
 		match = re.match(r"!(?P<currency>[\w\d]+)", data.GetParam(0))
-		Logger.info(match.group("currency"))
 		if match and match.group("currency") and match.group("currency") in Currency["Currency"]:
 			if data.GetParamCount() == 1 and not Parent.IsOnCooldown(ScriptName, match.group("currency")):
 				DB = Currency["Currency"][match.group("currency")]["Database"].cursor()
