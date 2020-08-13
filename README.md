@@ -3,6 +3,7 @@
 Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency. Works like the normal currency command, eg:
 
 `!<currencyname> add|remove <user>|+viewers|+active <amount>`
+
 `!<currencyname> transfer <from-user> <to-user>`
 
 ## Installation
