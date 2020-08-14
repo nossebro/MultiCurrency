@@ -36,4 +36,5 @@ AddToUser = {broadcaster} --> Successfully given {user} {amount} {currency}
 RemoveFromUser = {broadcaster} --> Successfully removed {amount} {currency} from {user}
 AddToViewers = {broadcaster} --> {action} giving {amount} {currency} to {group} in chat
 RemoveFromViewers = {broadcaster} --> {action} removing {amount} {currency} to {group} in chat
+Response = {user}: {amount} {currency}
 ```
