@@ -9,6 +9,7 @@ import os
 import codecs
 import json
 import ast
+from operator import neg
 from ConfigParser import ConfigParser
 clr.AddReference("IronPython.SQLite.dll")
 import sqlite3
@@ -21,7 +22,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.0.2"
+Version = "0.1.0"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -150,7 +151,7 @@ def UpdateCurrency(caster = str(), currency = str(), command = str(), user = str
 		if user.startswith("+"):
 			Parent.SendTwitchMessage(Currency["Currency"][currency]["removefromviewers"].format(broadcaster=caster, action="Started", amount=amount, currency=currency, group=user))
 		for x in userlist:
-			DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (x, amount * -1))
+			DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (x, neg(amount)))
 	Currency["Currency"][currency]["Database"].commit()
 	if user.startswith("+"):
 		Parent.SendTwitchMessage(Currency["Currency"][currency]["{0}{1}".format(action, group)].format(broadcaster=caster, action="Done", amount=amount, currency=currency, group=user))
@@ -188,7 +189,7 @@ def Init():
 		Currency["Commands"].update(config.items("Rewards"))
 		config.remove_section("Rewards")
 	for x in config.sections():
-		Currency["Currency"][config.get(x, "Command")] = { "Name": x, "Database": sqlite3.connect(os.path.join(os.path.dirname(__file__), config.get(x, "Database")), check_same_thread = False) }
+		Currency["Currency"][config.get(x, "Command")] = { "Name": x, "Cooldown": config.getint(x, "Cooldown"), "Database": sqlite3.connect(os.path.join(os.path.dirname(__file__), config.get(x, "Database")), check_same_thread = False) }
 		DB = Currency["Currency"][config.get(x, "Command")]["Database"].cursor()
 		DB.execute("CREATE TABLE IF NOT EXISTS currency (date text, user text, currency integer);")
 		Currency["Currency"][config.get(x, "Command")]["Database"].commit()
@@ -256,26 +257,91 @@ def Execute(data):
 	if data.IsChatMessage() and data.IsFromTwitch():
 		global Currency
 		match = re.match(r"!(?P<currency>[\w\d]+)", data.GetParam(0))
-		if match and match.group("currency") and match.group("currency") in Currency["Currency"]:
-			if data.GetParamCount() == 1 and not Parent.IsOnCooldown(ScriptName, match.group("currency")):
-				DB = Currency["Currency"][match.group("currency")]["Database"].cursor()
+		if match and match.group("currency").lower() and match.group("currency").lower() in Currency["Currency"]:
+			curname = match.group("currency").lower()
+			DB = Currency["Currency"][curname]["Database"].cursor()
+			# Viewer checks currency status with !<currency>
+			if data.GetParamCount() == 1 and not Parent.IsOnCooldown(ScriptName, curname):
 				DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(data.User))
 				Total = int(DB.fetchall()[0][0] or 0)
-				Parent.SendTwitchMessage(Currency["Currency"][match.group("currency")]["response"].format(user=data.UserName, amount=Total, currency=match.group("currency")))
+				Parent.SendTwitchMessage(Currency["Currency"][curname]["response"].format(user=data.UserName, amount=Total, currency=curname))
+				Parent.AddCooldown(ScriptName, curname, Currency["Currency"][curname]["Cooldown"])
+				Logger.debug("Currency: {0}, user: {1}, amount: {2}".format(curname, data.UserName, Total))
+			# Viewer enters or leaves the queue
+			elif "QueueActive" in Currency["Currency"][curname] and Currency["Currency"][curname]["QueueActive"] and data.GetParamCount() == 3 and data.GetParam(1).lower() == "queue" and data.GetParam(2).lower() in [ "enter", "leave" ] and not Parent.IsOnUserCooldown(ScriptName, curname, data.User):
+				if not "Queue" in Currency["Currency"][curname] or not isinstance(Currency["Currency"][curname]["Queue"], list):
+					Currency["Currency"][curname]["Queue"] = list()
+				if data.GetParam(2).lower() == "enter":
+					if not data.User in Currency["Currency"][curname]["Queue"]:
+						DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(data.User))
+						value = int(DB.fetchall()[0][0] or 0)
+						if value >= Currency["Currency"][curname]["QueueCost"]:
+							Currency["Currency"][curname]["Queue"].append(data.User)
+							Parent.SendTwitchMessage(Currency["Currency"][curname]["enterqueue"].format(user=data.UserName, currency=curname, position=len(Currency["Currency"][curname]["Queue"])))
+						else:
+							Parent.SendTwitchMessage("{0}: Not enough {1}: {2} ({3} needed)".format(data.UserName, curname, value, Currency["Currency"][curname]["QueueCost"]))
+				elif data.GetParam(2).lower() == "leave":
+					if data.User in Currency["Currency"][curname]["Queue"]:
+						Currency["Currency"][curname]["Queue"].remove(data.User)
+						Parent.SendTwitchMessage(Currency["Currency"][curname]["leavequeue"].format(user=data.UserName, currency=curname))
+				Parent.AddUserCooldown(ScriptName, curname, data.User, Currency["Currency"][curname]["Cooldown"])
+			elif data.GetParamCount() == 3 and Parent.HasPermission(data.User, "caster", "") and data.GetParam(2).lower() in [ "stop" , "list" ]:
+				# Broadcaster stops the queue
+				if data.GetParam(2).lower() == "stop":
+					Currency["Currency"][curname]["QueueActive"] = None
+					Parent.SendTwitchMessage(Currency["Currency"][curname]["closequeue"].format(broadcaster=data.UserName, currency=curname))
+				# Broadcaster lists the queue
+				elif data.GetParam(2).lower() == "list":
+					if not "Queue" in Currency["Currency"][curname] or not isinstance(Currency["Currency"][curname]["Queue"], list) or len(Currency["Currency"][curname]["Queue"]) == 0:
+						Parent.SendTwitchMessage("{0} queue empty!".format(curname.title()))
+					else:
+						Parent.SendTwitchMessage("{0} queue: {1}".format(curname.title(), ", ".join(Currency["Currency"][curname]["Queue"])))
 			elif data.GetParamCount() == 4 and Parent.HasPermission(data.User, "caster", ""):
+				# Broadcaster adds or removes currency
 				if data.GetParam(1).lower() in [ "add", "remove" ]:
 					if isinstance(ast.literal_eval(data.GetParam(3)), int):
-						UpdateCurrency(caster=data.UserName, currency=match.group("currency"), command=data.GetParam(1).lower(), user=data.GetParam(2).lower(), amount=int(data.GetParam(3)))
+						UpdateCurrency(caster=data.UserName, currency=curname, command=data.GetParam(1).lower(), user=data.GetParam(2).replace("@", "").lower(), amount=int(data.GetParam(3)))
 					else:
-						Parent.SendTwitchMessage("Malformed {0} command".format(match.group("currency")))
+						Parent.SendTwitchMessage("Malformed {0} command".format(curname))
+				# Broadcaster transfers currency from one user to another
 				elif data.GetParam(1).lower() == "transfer":
-					TransferCurrency(caster=data.UserName, currency=match.group("currency"), fromuser=data.GetParam(2).lower(), touser=data.GetParam(3).lower())
+					TransferCurrency(caster=data.UserName, currency=curname, fromuser=data.GetParam(2).replace("@", "").lower(), touser=data.GetParam(3).replace("@", "").lower())
 
-
-
-# !Points Add AnkhHeart 10000
-
-#		if not Parent.IsOnCooldown(ScriptName, ScriptSettings.OnlineBoostCommand) and data.GetParam(0) == "!{0}".format(ScriptSettings.OnlineBoostCommand) and data.GetParamCount() == 1:
+				elif data.GetParam(1).lower() == "queue":
+					# Broadcaster starts the queue
+					if data.GetParam(2).lower() == "start":
+						if isinstance(ast.literal_eval(data.GetParam(3)), int):
+							Currency["Currency"][curname]["QueueActive"] = True
+							Currency["Currency"][curname]["QueueCost"] = int(data.GetParam(3))
+							Parent.SendTwitchMessage(Currency["Currency"][curname]["openqueue"].format(broadcaster=data.UserName, currency=curname, cost=int(data.GetParam(3))))
+						else:
+							Parent.SendTwitchMessage("Malformed {0} queue command".format(curname))
+					# Broadcaster picks
+					elif data.GetParam(2).lower() == "pick":
+						if isinstance(ast.literal_eval(data.GetParam(3)), int):
+							length = int(data.GetParam(3))
+							if length > len(Currency["Currency"][curname]["Queue"]):
+								length = len(Currency["Currency"][curname]["Queue"])
+							if length == 0:
+								Parent.SendTwitchMessage("No users in {0} queue!".format(curname))
+								return
+							picks = list()
+							Logger.debug("Length: {0}".format(length))
+							for x in range(length):
+								user = Currency["Currency"][curname]["Queue"][x]
+								DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(user))
+								value = int(DB.fetchall()[0][0] or 0)
+								if value >= Currency["Currency"][curname]["QueueCost"]:
+									picks.append(user)
+									DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (user, neg(Currency["Currency"][curname]["QueueCost"])))
+								else:
+									Logger.info("Can not add {1} to queue, not enough {0}: {1} ({2})".format(curname, user, value))
+								Currency["Currency"][curname]["Queue"].remove(user)
+							Currency["Currency"][curname]["Database"].commit()
+							if len(picks) > 0:
+								Parent.SendTwitchMessage(Currency["Currency"][curname]["pickqueue"].format(broadcaster=data.UserName, amount=len(picks), users=", ".join(picks)))
+							else:
+								Parent.SendTwitchMessage("{0} queue was empty!".format(curname.title()))
 
 #---------------------------------------
 #   Chatbot Tick Function
@@ -352,6 +418,6 @@ def LocalSocketEvent(ws, data):
 			if event["data"]["reward_id"] in Currency["Commands"]:
 				txt = Currency["Commands"][event["data"]["reward_id"]].split(" ")
 				match = re.match(r"!(?P<currency>[\w\d]+)", txt[0])
-				UpdateCurrency(caster=event["data"]["display_name"], currency=match.group("currency"), command=txt[1].lower(), user=event["data"]["user_name"], amount=int(txt[3]))
+				UpdateCurrency(caster=event["data"]["display_name"], currency=curname, command=txt[1].lower(), user=event["data"]["user_name"], amount=int(txt[3]))
 #		else:
 #			Logger.warning("Unhandled event: {0}: {1}".format(event["event"], event["data"]))
