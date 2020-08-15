@@ -15,7 +15,19 @@ For the possibility to redeem currency with Twitch Channel Points, [TwitchPubSub
 3. Reload all scripts, so the new API_Key.js file gets picked up.
 4. Create a `Config.ini` in the script folder:
 
-Example Config.ini:
+## Queue Commands
+
+`!<currencyname> queue start <cost>|stop`
+
+`!<currencyname> queue pick <number of users>`
+
+`!<currencyname> queue list`
+
+### User Commands
+
+`!<currencyname> queue enter|leave`
+
+## Example Config.ini
 
 ```INI
 [Foo]
