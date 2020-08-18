@@ -22,7 +22,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.1.1"
+Version = "0.1.2"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -420,6 +420,6 @@ def LocalSocketEvent(ws, data):
 			if event["data"]["reward_id"] in Currency["Commands"]:
 				txt = Currency["Commands"][event["data"]["reward_id"]].split(" ")
 				match = re.match(r"!(?P<currency>[\w\d]+)", txt[0])
-				UpdateCurrency(caster=event["data"]["display_name"], currency=curname, command=txt[1].lower(), user=event["data"]["user_name"], amount=int(txt[3]))
+				UpdateCurrency(caster=event["data"]["display_name"], currency=match.group("currency").lower(), command=txt[1].lower(), user=event["data"]["user_name"], amount=int(txt[3]))
 #		else:
 #			Logger.warning("Unhandled event: {0}: {1}".format(event["event"], event["data"]))
