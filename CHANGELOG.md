@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - Bugfixes
+
+* Small bugfixes
+
 ## 0.1.0 - Queue functionality
 
 * Added a queue function to redeem currency for

@@ -22,7 +22,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.1.0"
+Version = "0.1.1"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -232,8 +232,8 @@ def Unload():
 			Currency["Currency"][x]["Database"] = None
 	global Logger
 	if Logger:
-		Logger.debug(type(Logger.handlers))
-		Logger.handlers.Clear()
+		for handler in Logger.handlers[:]:
+			Logger.removeHandler(handler)
 		Logger = None
 
 #---------------------------------------
@@ -327,7 +327,7 @@ def Execute(data):
 								return
 							picks = list()
 							Logger.debug("Length: {0}".format(length))
-							for x in range(length):
+							for x in xrange(length):
 								user = Currency["Currency"][curname]["Queue"][x]
 								DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(user))
 								value = int(DB.fetchall()[0][0] or 0)
@@ -342,6 +342,8 @@ def Execute(data):
 								Parent.SendTwitchMessage(Currency["Currency"][curname]["pickqueue"].format(broadcaster=data.UserName, amount=len(picks), users=", ".join(picks)))
 							else:
 								Parent.SendTwitchMessage("{0} queue was empty!".format(curname.title()))
+						else:
+							Parent.SendTwitchMessage("Malformed {0} queue command".format(curname))
 
 #---------------------------------------
 #   Chatbot Tick Function
