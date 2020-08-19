@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 - Bugfixes
+
+* Small bugfixes
+
 ## 0.1.3 - Use Currency Title
 
 * Use Currency Title in responses.
