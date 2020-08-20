@@ -22,7 +22,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.1.4"
+Version = "0.1.5"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -296,14 +296,14 @@ def Execute(data):
 				if data.GetParam(2).lower() == "stop":
 					CurrencyObj["Currency"][currency]["QueueActive"] = None
 					Parent.SendTwitchMessage(CurrencyObj["Currency"][currency]["closequeue"].format(broadcaster=data.UserName, command=currency, currency=CurrencyObj["Currency"][currency]["Name"]))
-					Logger.debug("Stop Queue: currency: {1}".format(currency))
+					Logger.debug("Stop Queue: currency: {0}, queue: {1}".format(currency, ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
 				# Broadcaster lists the queue
 				elif data.GetParam(2).lower() == "list":
 					if not "Queue" in CurrencyObj["Currency"][currency] or not isinstance(CurrencyObj["Currency"][currency]["Queue"], list) or len(CurrencyObj["Currency"][currency]["Queue"]) == 0:
 						Parent.SendTwitchMessage("{0} queue empty!".format(CurrencyObj["Currency"][currency]["Name"]))
 					else:
 						Parent.SendTwitchMessage("{0} queue: {1}".format(CurrencyObj["Currency"][currency]["Name"], ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
-					Logger.debug("List Queue: currency: {1}".format(currency))
+					Logger.debug("List Queue: currency: {0}, queue {1}".format(currency, ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
 			elif data.GetParamCount() == 4 and Parent.HasPermission(data.User, "caster", ""):
 				# Broadcaster adds or removes currency
 				if data.GetParam(1).lower() in [ "add", "remove" ]:
@@ -326,7 +326,7 @@ def Execute(data):
 						else:
 							Parent.SendTwitchMessage("Malformed {0} queue command".format(currency))
 					# Broadcaster picks
-					elif data.GetParam(2).lower() == "pick":
+					elif data.GetParam(2).lower() == "pick" and "QueueCost" in CurrencyObj["Currency"][currency]:
 						if isinstance(ast.literal_eval(data.GetParam(3)), int):
 							length = int(data.GetParam(3))
 							if length > len(CurrencyObj["Currency"][currency]["Queue"]):
@@ -335,9 +335,9 @@ def Execute(data):
 								Parent.SendTwitchMessage("No users in {0} queue!".format(CurrencyObj["Currency"][currency]["Name"]))
 								return
 							picks = list()
-							Logger.debug("Picks: currency: {0}, length: {1}".format(currency, length))
-							for x in xrange(length):
-								user = CurrencyObj["Currency"][currency]["Queue"][x]
+							Logger.debug("Picks: currency: {0}, picks: {1}, length: {2}, queue: {3}".format(currency, length, len(CurrencyObj["Currency"][currency]["Queue"]), ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
+							for user in CurrencyObj["Currency"][currency]["Queue"][:length]:
+								Logger.debug("Picked user: {0}".format(user))
 								DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(user))
 								value = int(DB.fetchall()[0][0] or 0)
 								if value >= CurrencyObj["Currency"][currency]["QueueCost"]:
