@@ -9,6 +9,7 @@ import os
 import codecs
 import json
 import ast
+import random
 from operator import neg
 from ConfigParser import ConfigParser
 clr.AddReference("IronPython.SQLite.dll")
@@ -22,7 +23,7 @@ from WebSocketSharp import WebSocket
 ScriptName = "MultiCurrency"
 Website = "https://github.com/nossebro/MultiCurrency"
 Creator = "nossebro"
-Version = "0.1.5"
+Version = "0.1.6"
 Description = "Add more currencies with (Streamlabs-like) commands and listening for events to add or remove currency."
 
 #---------------------------------------
@@ -259,6 +260,7 @@ def ReloadSettings(jsondata):
 #---------------------------------------
 def Execute(data):
 	if data.IsChatMessage() and data.IsFromTwitch():
+		Logger.debug("How many: {}".format(data.GetParamCount()))
 		global CurrencyObj
 		match = re.match(r"!(?P<currency>[\w\d]+)", data.GetParam(0))
 		if match and match.group("currency").lower() and match.group("currency").lower() in CurrencyObj["Currency"]:
@@ -335,7 +337,7 @@ def Execute(data):
 								Parent.SendTwitchMessage("No users in {0} queue!".format(CurrencyObj["Currency"][currency]["Name"]))
 								return
 							picks = list()
-							Logger.debug("Picks: currency: {0}, picks: {1}, length: {2}, queue: {3}".format(currency, length, len(CurrencyObj["Currency"][currency]["Queue"]), ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
+							Logger.debug("Picks: currency: {0}, picks: {1}, length: {2}, queue: {3}, random: False".format(currency, length, len(CurrencyObj["Currency"][currency]["Queue"]), ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
 							for user in CurrencyObj["Currency"][currency]["Queue"][:length]:
 								Logger.debug("Picked user: {0}".format(user))
 								DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(user))
@@ -350,7 +352,44 @@ def Execute(data):
 							if len(picks) > 0:
 								Parent.SendTwitchMessage(CurrencyObj["Currency"][currency]["pickqueue"].format(broadcaster=data.UserName, amount=len(picks), users=", ".join(picks)))
 							else:
-								Parent.SendTwitchMessage("{0} queue was empty!".format(CurrencyObj["Currency"][currency]["Name"]))
+								Parent.SendTwitchMessage("{0} queue did not contain enough eligable users!".format(CurrencyObj["Currency"][currency]["Name"]))
+						else:
+							Parent.SendTwitchMessage("Malformed {0} queue command".format(currency))
+			elif data.GetParamCount() == 5 and Parent.HasPermission(data.User, "caster", ""):
+				if data.GetParam(1).lower() == "queue":
+					if data.GetParam(2).lower() == "pick" and "QueueCost" in CurrencyObj["Currency"][currency]:
+						if isinstance(ast.literal_eval(data.GetParam(3)), int) and data.GetParam(4).lower() == "random":
+							length = int(data.GetParam(3))
+							if length > len(CurrencyObj["Currency"][currency]["Queue"]):
+								length = len(CurrencyObj["Currency"][currency]["Queue"])
+							if length == 0:
+								Parent.SendTwitchMessage("No users in {0} queue!".format(CurrencyObj["Currency"][currency]["Name"]))
+								return
+							picks = list()
+							Logger.debug("Picks: currency: {0}, picks: {1}, length: {2}, queue: {3}, random: True".format(currency, length, len(CurrencyObj["Currency"][currency]["Queue"]), ", ".join(CurrencyObj["Currency"][currency]["Queue"])))
+							for user in CurrencyObj["Currency"][currency]["Queue"]:
+								DB.execute("SELECT SUM(currency) AS currency FROM currency WHERE user == '{0}' COLLATE NOCASE;".format(user))
+								value = int(DB.fetchall()[0][0] or 0)
+								if value >= CurrencyObj["Currency"][currency]["QueueCost"]:
+									picks.append(user)
+								else:
+									Logger.info("Can not add {1} to queue, not enough {0}: {1} ({2})".format(CurrencyObj["Currency"][currency]["Name"], user, value))
+								CurrencyObj["Currency"][currency]["Queue"].remove(user)
+							if len(picks) > length:
+								while len(picks) > length:
+									picks.pop(random.randrange(len(picks)))
+								for user in picks:
+									Logger.debug("Picked user: {0}".format(user))
+									DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (user, neg(CurrencyObj["Currency"][currency]["QueueCost"])))
+								Parent.SendTwitchMessage(CurrencyObj["Currency"][currency]["pickqueue"].format(broadcaster=data.UserName, amount=len(picks), users=", ".join(picks)))
+							elif len(picks) > 0:
+								for user in picks:
+									Logger.debug("Picked user: {0}".format(user))
+									DB.execute("INSERT INTO currency (date, user, currency) VALUES (DATETIME('now'), ?, ?);", (user, neg(CurrencyObj["Currency"][currency]["QueueCost"])))
+								Parent.SendTwitchMessage(CurrencyObj["Currency"][currency]["pickqueue"].format(broadcaster=data.UserName, amount=len(picks), users=", ".join(picks)))
+							else:
+								Parent.SendTwitchMessage("{0} queue did not contain enough eligable users!".format(CurrencyObj["Currency"][currency]["Name"]))
+							CurrencyObj["Currency"][currency]["Database"].commit()
 						else:
 							Parent.SendTwitchMessage("Malformed {0} queue command".format(currency))
 

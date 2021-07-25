@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6 - Add random to picks
+
+* Randomly picks users instead of first in queue
+
 ## 0.1.5 - Fix queue picks
 
 * Use slices instead of xrange

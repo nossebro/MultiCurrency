@@ -19,7 +19,7 @@ For the possibility to redeem currency with Twitch Channel Points, [TwitchPubSub
 
 `!<currencyname> queue start <cost>|stop`
 
-`!<currencyname> queue pick <number of users>`
+`!<currencyname> queue pick <number of users> [random]`
 
 `!<currencyname> queue list`
 
